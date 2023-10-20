@@ -1,36 +1,25 @@
-from fastapi import FastAPI, Path, Query, HTTPException, Request
-from pydantic import BaseModel
-from typing import Union
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
-class User(BaseModel):
-    name: str
-    age: int = Path(ge=0, le=120)
-    height: Union[float, None] = None
+from fastapi import FastAPI, HTTPException, Depends
+import models, schemas
+from database import engine, SessionLocal
+from sqlalchemy.orm import Session
 
-class UserIn(BaseModel):
-    username: str
-    email: str
-    password: str
-
-class UserOut(BaseModel):
-    username:str
-    email:str
-
+models.Base.metadata.create_all(bind=engine)
 app = FastAPI()
 
-templates = Jinja2Templates(directory="templates")
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-@app.get('/{username}', response_class=HTMLResponse)
-def indx(request: Request, username:str):
-    return templates.TemplateResponse('home.html', {'request':request,'username':username} , )
-
-@app.post('/users/')
-def get_index(user:User, car:str=Query('nothing, min_length=2, max_lenght=20')):
-    return user, car
-@app.post('/home/', response_model=UserOut, status_code=201)
-def index(usr:UserIn):
-    if usr.username == 'admin':
-        raise HTTPException(detail="user can't be admin", status_code=400, headers={"X-error":"there goes my error"})
-    return usr
-
+@app.post('/users/', response_model=schemas.User)
+def create_user(user:schemas.UserCreate, db: Session = Depends(get_db)):
+    db_user = db.query(models.User).filter(models.User.email==user.email).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail='Email exists')
+    user = models.User(email=user.email, username=user.username, password=user.password)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
